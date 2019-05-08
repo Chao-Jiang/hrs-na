@@ -1,0 +1,90 @@
+---
+title: "Network psychometrics"
+author: "Rita M Ludwig & Sara J Weston"
+date: "4/29/2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+library('psych')
+library('qgraph')
+library('bootnet')
+library('tidyverse')
+library('dplyr')
+```
+Start by randomly generating some dummy data, using the names of the variables of interest from the HRS data sets. Then make the dummy data look multi-wave.
+```{r dummy data gen}
+set.seed(0507)
+
+dummy = sim.multi(nvar = 68, ntrials = 3, days = 3, n.obs = 1000, plot = FALSE)
+dummy$time = dummy$time/24
+data = dummy %>% 
+  rename(wave = time) %>% 
+  select(-starts_with("F"))
+```
+
+We now have a dummy dataset of n = 1000, 68 survey items repeated over 3 waves. Now, let's get these data in the appropriate format for network analysis. Following Costantini et al. 2019, we first create a dataset where all participants' responses are meaned by variable, then a dataset where we center all variables within each participant.
+```{r centering}
+## For meaned dataset
+mdata = data %>%
+  group_by(id) %>%
+  mutate_at(vars(-id,-wave), mean)
+
+## For centered dataset
+centerf = (function(x) (x - mean(x)) )
+
+cdata = data %>%
+  group_by(id) %>%
+  mutate_at(vars(-id,-wave), centerf)
+```
+Proceed with the network psychometrics code, borrowing heavily from Costantini et al. 2019.
+```{r network analysis}
+## Generate correlation matrix of variables - meaned data
+mcorrmat = cor(mdata[,1:68])
+
+## Generate correlation matrix of variables - centered data
+ccorrmat = cor(cdata[,1:68])
+
+## Between-subjects network
+betnetwork = EBICglasso(S = mcorrmat, n = length(unique(data$id)))
+qgraph(betnetwork, layout = "spring")
+
+## Within-subjects network
+winnetwork = EBICglasso(S = ccorrmat, n = nrow(data)) 
+qgraph(winnetwork, layout = "spring")
+```
+Now some output statistics. Again, code copied or adapted from Constantini et al. 2019.
+```{r network analysis output statistics}
+# The following code computes the correlation stability coefficients for centrality estimates. Notice that this computation may take a while.
+nboots = 10000
+caseN = 100
+btnt <- list()
+# bootnet on the between-subject network
+set.seed(1)
+btnt$betnetwork <- bootnet(select(mdata, -c(wave, id)),
+                         default = "EBICglasso",
+                         type = "case",
+                         nBoots = nboots,
+                         caseN = caseN)
+
+# bootnet on the within-subject network
+set.seed(1)
+btnt$winnetwork <- bootnet(select(cdata, -c(wave, id)),
+                         default = "EBICglasso",
+                         type = "case",
+                         nBoots = nboots,
+                         caseN = caseN)
+corStability(btnt$betnetwork)
+corStability(btnt$winnetwork)
+
+### Centrality and clustering coefficient estimates
+centrality_auto(betnetwork)
+centralityPlot(betnetwork)
+clustcoef_auto(betnetwork)
+clusteringPlot(betnetwork, include = "Zhang", signed = TRUE)
+
+centrality_auto(winnetwork)
+centralityPlot(winnetwork)
+clustcoef_auto(winnetwork)
+clusteringPlot(winnetwork, include = "Zhang", signed = TRUE)
+```
